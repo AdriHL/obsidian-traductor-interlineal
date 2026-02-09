@@ -1,9 +1,9 @@
 {
-	"id": "traductor-interlineal",
-	"name": "Traductor Interlineal Pro",
+	"id": "interlinear-translator",
+	"name": "Interlinear Translator Pro",
 	"version": "1.0.2",
 	"minAppVersion": "0.15.0",
-	"description": "Traductor híbrido (Google/Local) con memoria persistente.",
+	"description": "Bilingual reading assistant. Displays translations below the text using Google Translate or Local AI (Ollama).",
 	"author": "AdriHL",
 	"authorUrl": "https://github.com/AdriHL",
 	"isDesktopOnly": false
