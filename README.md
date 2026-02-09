@@ -20,3 +20,5 @@
 
 ## 🛠️ Troubleshooting
 If you see "⚠️ Error", go to Settings and click **"Clear Memory"** to reset the cache.
+![Obsidian_kwyriMa8Lw](https://github.com/user-attachments/assets/427a3879-2fe5-4a19-899e-d1056a67e16f)
+![Obsidian_kwyriMa8Lw](https://github.com/user-attachments/assets/427a3879-2fe5-4a19-899e-d1056a67e16f)
