@@ -1,0 +1,10 @@
+{
+	"id": "traductor-interlineal",
+	"name": "Traductor Interlineal Pro",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Traductor híbrido (Google/Local) con memoria persistente.",
+	"author": "Adrian",
+	"authorUrl": "https://github.com/",
+	"isDesktopOnly": false
+}
