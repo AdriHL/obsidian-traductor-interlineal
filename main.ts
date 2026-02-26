@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, requestUrl, Notice, debounce, Modal } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, requestUrl, Notice, debounce, Modal, SuggestModal, TFile } from 'obsidian';
 import { Extension, StateField, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 
@@ -27,7 +27,7 @@ interface InterlinearSettings {
     alertThresholdPercent: number;
     currentMonthChars: number;
     lastResetMonth: string;
-    dontAskConfirmClear: boolean; // Nuevo: Recordar decisión
+    dontAskConfirmClear: boolean;
 }
 
 const DEFAULT_SETTINGS: InterlinearSettings = {
@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS: InterlinearSettings = {
 export default class InterlinearPlugin extends Plugin {
     settings: InterlinearSettings;
     translationCache: Map<string, string> = new Map();
-    requestQueue: string[] = [];
+    requestQueue: { text: string, lang: string }[] = []; 
     isProcessingQueue: boolean = false;
     ribbonIconEl: HTMLElement | null = null;
     statusBarItemEl: HTMLElement | null = null;
@@ -59,21 +59,133 @@ export default class InterlinearPlugin extends Plugin {
         this.translationCache = new Map(Object.entries(this.settings.savedTranslations || {}));
         this.checkMonthlyReset();
 
+        // --- COMANDOS RÁPIDOS ---
+        this.addCommand({
+            id: 'toggle-translator-current-file',
+            name: 'Activar/Desactivar traductor SOLO en esta nota',
+            callback: () => this.toggleTranslationForActiveFile()
+        });
+
+        this.addCommand({
+            id: 'set-language-current-file',
+            name: 'Cambiar idioma de traducción para esta nota...',
+            callback: () => this.openLanguageModalForActiveFile()
+        });
+
         this.addCommand({
             id: 'toggle-translator',
-            name: 'Toggle Translator On/Off',
+            name: 'Toggle Translator On/Off (Global)',
             hotkeys: [{ modifiers: ["Alt", "Shift"], key: "t" }], 
             callback: () => this.togglePluginStatus()
         });
 
+        // --- BARRA DE ESTADO CLICABLE ---
         this.statusBarItemEl = this.addStatusBarItem();
+        this.statusBarItemEl.addClass("mod-clickable");
+        this.statusBarItemEl.addEventListener("click", () => this.openLanguageModalForActiveFile());
         this.updateStatusBar();
 
+        // --- ICONO LATERAL ---
         this.ribbonIconEl = this.addRibbonIcon('languages', 'Interlinear Translator', () => this.togglePluginStatus());
         this.updateRibbonIcon();
 
+        // --- MENÚ DE LOS 3 PUNTITOS Y EXPLORADOR ---
+        this.registerEvent(
+            this.app.workspace.on("file-menu", (menu, file) => {
+                if (file instanceof TFile && file.extension === "md") {
+                    menu.addSeparator();
+                    menu.addItem((item) => {
+                        item.setTitle("🌐 Traductor: Cambiar idioma")
+                            .setIcon("languages")
+                            .onClick(() => {
+                                new LanguageSuggestModal(this.app, this, file).open();
+                            });
+                    });
+                    menu.addItem((item) => {
+                        item.setTitle("⚡ Traductor: Activar/Desactivar")
+                            .setIcon("power")
+                            .onClick(async () => {
+                                await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                                    if (frontmatter.hasOwnProperty('translate')) {
+                                        frontmatter['translate'] = !frontmatter['translate'];
+                                    } else {
+                                        frontmatter['translate'] = !this.settings.isActive; 
+                                    }
+                                    new Notice(frontmatter['translate'] ? "🟢 Traductor ACTIVADO para esta nota" : "🔴 Traductor DESACTIVADO para esta nota");
+                                });
+                                this.app.workspace.updateOptions();
+                            });
+                    });
+                }
+            })
+        );
+
+        // --- MENÚ DE CLIC DERECHO EN EL TEXTO ---
+        this.registerEvent(
+            this.app.workspace.on("editor-menu", (menu, editor, view) => {
+                menu.addSeparator();
+                menu.addItem((item) => {
+                    item.setTitle("🌐 Traductor: Cambiar idioma de esta nota")
+                        .setIcon("languages")
+                        .onClick(() => {
+                            this.openLanguageModalForActiveFile();
+                        });
+                });
+            })
+        );
+
+        // --- CARGA FINAL ---
         this.registerEditorExtension(this.liveTranslationExtension());
         this.addSettingTab(new InterlinearSettingTab(this.app, this));
+    }
+
+    // --- RASTREADOR DE PROPIEDADES (FRONTMATTER) ---
+    getFileSettings(): { isActive: boolean, targetLang: string } {
+        let localIsActive = this.settings.isActive;
+        let localTargetLang = this.settings.targetLang;
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (activeFile) {
+            const cache = this.app.metadataCache.getFileCache(activeFile);
+            const frontmatter = cache?.frontmatter;
+
+            if (frontmatter) {
+                if (frontmatter.hasOwnProperty('translate')) {
+                    localIsActive = frontmatter['translate'] === true; 
+                }
+                if (frontmatter.hasOwnProperty('target_lang')) {
+                    localTargetLang = frontmatter['target_lang'];
+                }
+            }
+        }
+        return { isActive: localIsActive, targetLang: localTargetLang };
+    }
+
+    async toggleTranslationForActiveFile() {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) {
+            new Notice("⚠️ No se ha encontrado ninguna nota activa.");
+            return;
+        }
+
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+            if (frontmatter.hasOwnProperty('translate')) {
+                frontmatter['translate'] = !frontmatter['translate'];
+            } else {
+                frontmatter['translate'] = !this.settings.isActive; 
+            }
+            new Notice(frontmatter['translate'] ? "🟢 Traductor ACTIVADO para esta nota" : "🔴 Traductor DESACTIVADO para esta nota");
+        });
+        this.app.workspace.updateOptions();
+    }
+
+    openLanguageModalForActiveFile() {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) {
+            new Notice("⚠️ No se ha encontrado ninguna nota activa.");
+            return;
+        }
+        new LanguageSuggestModal(this.app, this, file).open();
     }
 
     checkMonthlyReset() {
@@ -105,24 +217,21 @@ export default class InterlinearPlugin extends Plugin {
 
     updateStatusBar() {
         if (!this.statusBarItemEl) return;
-        if (!this.settings.isActive) {
-            this.statusBarItemEl.setText("🔕 Translator Off");
+        
+        const { isActive, targetLang } = this.getFileSettings();
+
+        if (!isActive) {
+            this.statusBarItemEl.setText("🔕 Traductor: Apagado");
             this.statusBarItemEl.style.color = "";
         } else {
             const mode = this.settings.provider;
             let icon = "🟢";
             let color = "#66ff66";
             
-            if (mode === 'google_api') { 
-                icon = "⚡"; color = "#ffcc00"; 
-                const percent = ((this.settings.currentMonthChars / this.settings.monthlyCharacterLimit) * 100).toFixed(1);
-                this.statusBarItemEl.setText(`${icon} PRO (${percent}%)`);
-                this.statusBarItemEl.style.color = color;
-                return;
-            }
+            if (mode === 'google_api') { icon = "⚡"; color = "#ffcc00"; }
             if (mode === 'local_ollama') { icon = "🔒"; color = "#00ffff"; }
 
-            this.statusBarItemEl.setText(`${icon} ${this.getProviderName()}`);
+            this.statusBarItemEl.setText(`${icon} a ${LANGUAGES[targetLang] || targetLang}`);
             this.statusBarItemEl.style.color = color;
         }
     }
@@ -141,21 +250,24 @@ export default class InterlinearPlugin extends Plugin {
         return StateField.define<DecorationSet>({
             create: () => Decoration.none,
             update: (decorations, transaction) => {
-                if (!this.settings.isActive) return Decoration.none;
-                return this.getDecorations(transaction.state.doc);
+                const { isActive, targetLang } = this.getFileSettings();
+                this.updateStatusBar();
+
+                if (!isActive) return Decoration.none;
+                return this.getDecorations(transaction.state.doc, targetLang);
             },
             provide: field => EditorView.decorations.from(field)
         });
     }
 
-    getDecorations(doc: any): DecorationSet {
+    getDecorations(doc: any, currentLang: string): DecorationSet {
         const builder = new RangeSetBuilder<Decoration>();
         for (let i = 1; i <= doc.lines; i++) {
             const line = doc.line(i);
             const text = line.text.trim();
             if (text.length < 3 || text.startsWith("```") || text.startsWith("$$")) continue;
 
-            const cacheKey = `${text}_${this.settings.targetLang}_${this.settings.provider}`;
+            const cacheKey = `${text}_${currentLang}_${this.settings.provider}`;
             let translatedText = "..."; 
             let isWaiting = true;
 
@@ -163,7 +275,7 @@ export default class InterlinearPlugin extends Plugin {
                 translatedText = this.translationCache.get(cacheKey) || "";
                 isWaiting = false;
             } else {
-                if (!this.requestQueue.includes(text)) this.addToQueue(text);
+                this.addToQueue(text, currentLang);
             }
 
             builder.add(line.to, line.to, Decoration.widget({
@@ -174,9 +286,9 @@ export default class InterlinearPlugin extends Plugin {
         return builder.finish();
     }
 
-    addToQueue(text: string) {
-        if (!this.requestQueue.includes(text)) {
-            this.requestQueue.push(text);
+    addToQueue(text: string, lang: string) {
+        if (!this.requestQueue.find(item => item.text === text && item.lang === lang)) {
+            this.requestQueue.push({ text, lang });
             this.processQueue();
         }
     }
@@ -186,8 +298,10 @@ export default class InterlinearPlugin extends Plugin {
         this.isProcessingQueue = true;
 
         while (this.requestQueue.length > 0) {
-            const textToTranslate = this.requestQueue[0];
-            const cacheKey = `${textToTranslate}_${this.settings.targetLang}_${this.settings.provider}`;
+            const request = this.requestQueue[0];
+            const textToTranslate = request.text;
+            const targetLang = request.lang; 
+            const cacheKey = `${textToTranslate}_${targetLang}_${this.settings.provider}`;
             
             let delay = 800; 
             if (this.settings.provider === 'google_api') delay = 200; 
@@ -199,11 +313,11 @@ export default class InterlinearPlugin extends Plugin {
                 try {
                     let result = "";
                     if (this.settings.provider === 'local_ollama') {
-                        result = await this.translateLocal(textToTranslate);
+                        result = await this.translateLocal(textToTranslate, targetLang);
                     } else if (this.settings.provider === 'google_api') {
-                        result = await this.translateGooglePro(textToTranslate);
+                        result = await this.translateGooglePro(textToTranslate, targetLang);
                     } else {
-                        result = await this.translateGoogleFree(textToTranslate);
+                        result = await this.translateGoogleFree(textToTranslate, targetLang);
                     }
                     
                     const esError = result.startsWith("⚠️") || result.includes("Error") || result.includes("Key");
@@ -220,13 +334,30 @@ export default class InterlinearPlugin extends Plugin {
         this.isProcessingQueue = false;
     }
 
-    async translateGoogleFree(text: string): Promise<string> {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${this.settings.targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-        const response = await requestUrl({ url: url });
-        return response.json?.[0]?.[0]?.[0] || "Error";
+    async translateGoogleFree(text: string, targetLang: string): Promise<string> {
+        try {
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+            const response = await requestUrl({ url: url });
+            
+            const translationParts = response.json?.[0];
+            if (!translationParts || !Array.isArray(translationParts)) return "Error de formato Google";
+
+            let fullTranslation = "";
+            for (let i = 0; i < translationParts.length; i++) {
+                const part = translationParts[i];
+                if (Array.isArray(part) && typeof part[0] === 'string') {
+                    fullTranslation += part[0];
+                }
+            }
+            
+            return fullTranslation.trim() || "Error al unir frases";
+        } catch (error) {
+            console.error("Traductor - Error en Google Free:", error);
+            return "⚠️ Error de conexión Free";
+        }
     }
 
-    async translateGooglePro(text: string): Promise<string> {
+    async translateGooglePro(text: string, targetLang: string): Promise<string> {
         if (!this.settings.apiKey) return "⚠️ Missing API Key";
 
         const limit = this.settings.monthlyCharacterLimit;
@@ -240,7 +371,7 @@ export default class InterlinearPlugin extends Plugin {
         const url = `https://translation.googleapis.com/language/translate/v2?key=${this.settings.apiKey}`;
         const response = await requestUrl({ 
             url: url, method: 'POST',
-            body: JSON.stringify({ q: text, target: this.settings.targetLang, format: 'text' })
+            body: JSON.stringify({ q: text, target: targetLang, format: 'text' })
         });
         
         const translated = response.json?.data?.translations?.[0]?.translatedText;
@@ -254,8 +385,9 @@ export default class InterlinearPlugin extends Plugin {
         return translated || "Error API";
     }
 
-    async translateLocal(text: string): Promise<string> {
-        const systemPrompt = `Translate to ${this.settings.targetLang}. Output ONLY translation.`;
+    async translateLocal(text: string, targetLang: string): Promise<string> {
+        const fullLangName = LANGUAGES[targetLang] || targetLang;
+        const systemPrompt = `Translate to ${fullLangName}. Output ONLY translation.`;
         try {
             const response = await requestUrl({
                 url: 'http://localhost:11434/api/generate',
@@ -344,7 +476,7 @@ class ConfirmModal extends Modal {
     }
 }
 
-// --- CONFIGURACIÓN UI (ENGLISH) ---
+// --- CONFIGURACIÓN UI ---
 class InterlinearSettingTab extends PluginSettingTab {
     plugin: InterlinearPlugin;
     constructor(app: App, plugin: InterlinearPlugin) { super(app, plugin); this.plugin = plugin; }
@@ -355,7 +487,6 @@ class InterlinearSettingTab extends PluginSettingTab {
         
         containerEl.createEl('h2', {text: '🌍 Interlinear Translator Settings'});
 
-        // DATABASE BUTTON
         new Setting(containerEl)
         .setName('🗑️ Clear Database')
         .setDesc('Deletes all saved translations to free up space or fix errors.')
@@ -363,7 +494,6 @@ class InterlinearSettingTab extends PluginSettingTab {
             .setButtonText('Clear Memory')
             .setWarning()
             .onClick(async () => {
-                // Check if "Don't ask again" is active
                 if (this.plugin.settings.dontAskConfirmClear) {
                     this.clearDatabase();
                 } else {
@@ -396,16 +526,14 @@ class InterlinearSettingTab extends PluginSettingTab {
             new Setting(containerEl).setName('🔑 Google API Key').addText(t => t.setValue(this.plugin.settings.apiKey).onChange(async v => { this.plugin.settings.apiKey = v; await this.plugin.saveSettings(); }));
             new Setting(containerEl).setName('📊 Characters Used (Month)').addText(t => t.setValue(this.plugin.settings.currentMonthChars.toString()).setDisabled(true));
             
-            // INPUT NUMÉRICO PURO (0-100)
             new Setting(containerEl).setName('🔔 Usage Warning Threshold (%)')
                 .setDesc('Notify me when usage reaches this percentage (0-100).')
                 .addText(text => text
                     .setPlaceholder("80.00")
                     .setValue(this.plugin.settings.alertThresholdPercent.toFixed(2))
                     .onChange(async (value) => {
-                        // Forzar que sea número válido
                         let num = parseFloat(value);
-                        if (isNaN(num)) return; // Si no es numero, no hacemos nada
+                        if (isNaN(num)) return;
                         if (num < 0) num = 0;
                         if (num > 100) num = 100;
                         
@@ -420,7 +548,7 @@ class InterlinearSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h3', {text: '🎨 Appearance'});
 
-        new Setting(containerEl).setName('Target Language')
+        new Setting(containerEl).setName('Target Language (Global)')
             .addDropdown(dropdown => {
                 const sortedLangs = Object.entries(LANGUAGES).sort((a, b) => a[1].localeCompare(b[1]));
                 sortedLangs.forEach(([code, name]) => dropdown.addOption(code, name));
@@ -437,6 +565,38 @@ class InterlinearSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         new Notice('✅ Memory cleared successfully.');
         this.plugin.app.workspace.updateOptions();
+    }
+}
+
+class LanguageSuggestModal extends SuggestModal<string> {
+    plugin: InterlinearPlugin;
+    file: TFile;
+
+    constructor(app: App, plugin: InterlinearPlugin, file: TFile) {
+        super(app);
+        this.plugin = plugin;
+        this.file = file;
+        this.setPlaceholder("Buscar idioma (ej. Spanish, en, fr...)");
+    }
+
+    getSuggestions(query: string): string[] {
+        const queryLower = query.toLowerCase();
+        return Object.keys(LANGUAGES).filter(code => 
+            LANGUAGES[code].toLowerCase().includes(queryLower) || code.includes(queryLower)
+        );
+    }
+
+    renderSuggestion(code: string, el: HTMLElement) {
+        el.createEl("div", { text: LANGUAGES[code] });
+        el.createEl("small", { text: `Código: ${code}`, cls: "text-muted" });
+    }
+
+    async onChooseSuggestion(code: string, evt: MouseEvent | KeyboardEvent) {
+        await this.plugin.app.fileManager.processFrontMatter(this.file, (frontmatter) => {
+            frontmatter['target_lang'] = code;
+        });
+        new Notice(`🎯 Idioma establecido a: ${LANGUAGES[code]} para esta nota`);
+        this.plugin.app.workspace.updateOptions(); 
     }
 }
 
