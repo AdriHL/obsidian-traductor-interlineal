@@ -1,7 +1,7 @@
 # Interlinear Translator Pro 📚✨
 
 ![Banner o Captura Principal](https://via.placeholder.com/800x200?text=Interlinear+Translator+Pro+Banner)
-*(Reemplaza este enlace con una imagen o GIF de tu plugin en acción)*
+
 
 **Interlinear Translator Pro** es un asistente de lectura bilingüe para Obsidian. A diferencia de los traductores tradicionales que reemplazan el texto, este plugin **añade la traducción línea por línea** debajo de tu texto original, permitiéndote aprender idiomas, comparar estructuras y leer sin perder el contexto original.
 
