@@ -1,8 +1,5 @@
 # Interlinear Translator Pro 📚✨
 
-![Banner o Captura Principal](https://via.placeholder.com/800x200?text=Interlinear+Translator+Pro+Banner)
-
-
 **Interlinear Translator Pro** es un asistente de lectura bilingüe para Obsidian. A diferencia de los traductores tradicionales que reemplazan el texto, este plugin **añade la traducción línea por línea** debajo de tu texto original, permitiéndote aprender idiomas, comparar estructuras y leer sin perder el contexto original.
 
 Ideal para estudiantes de idiomas, traductores y lectura de textos complejos.
@@ -73,8 +70,6 @@ Para usar IA local, necesitas instalar Ollama en tu equipo:
 ---
 
 ## 🚀 Cómo Usar
-
-![GIF demostrativo](https://via.placeholder.com/600x300?text=GIF+Demostrativo)
 
 1.  Abre cualquier nota en Obsidian.
 2.  **Selecciona el texto** que quieres traducir.
